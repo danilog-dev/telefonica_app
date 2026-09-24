@@ -13,7 +13,6 @@ interface ContactData {
   piso?: string;
   telefono?: string;
   t?: string | number;
-  notas?: string;
 }
 
 interface MessageBanner {
@@ -27,6 +26,7 @@ export default function HomePage() {
   const [inputPassword, setInputPassword] = useState<string>('');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string>('');
+  const [logoutNotice, setLogoutNotice] = useState<string>('');
 
   // Territory state
   const [sheetType, setSheetType] = useState<SheetType>('Números');
@@ -41,7 +41,7 @@ export default function HomePage() {
   const [adminLoading, setAdminLoading] = useState<boolean>(false);
   const [adminMessage, setAdminMessage] = useState<MessageBanner | null>(null);
 
-  // Keep a ref to the active contact for release on unload
+  // Keep a ref to active contact & password for release on unload
   const contactRef = useRef<ContactData | null>(null);
   const passwordRef = useRef<string>('');
 
@@ -52,15 +52,6 @@ export default function HomePage() {
   useEffect(() => {
     passwordRef.current = password;
   }, [password]);
-
-  // Load password from localStorage on mount
-  useEffect(() => {
-    const savedPassword = localStorage.getItem('territorio_app_password');
-    if (savedPassword) {
-      setPassword(savedPassword);
-      setIsAuthenticated(true);
-    }
-  }, []);
 
   // Release lock helper
   const releaseCurrentContact = useCallback(
@@ -90,6 +81,87 @@ export default function HomePage() {
     },
     []
   );
+
+  // Fetch next contact
+  const fetchNextContact = useCallback(
+    async (targetSheet?: SheetType, pwdOverride?: string) => {
+      const activeSheet = targetSheet || sheetType;
+      const activePwd = pwdOverride || passwordRef.current;
+
+      if (!activePwd) return;
+
+      setLoading(true);
+      setStatusMessage(null);
+
+      try {
+        const res = await fetch(`/api/next?sheet=${encodeURIComponent(activeSheet)}`, {
+          method: 'GET',
+          headers: {
+            'x-app-password': activePwd,
+          },
+        });
+
+        if (res.status === 401) {
+          localStorage.removeItem('territorio_app_password');
+          setIsAuthenticated(false);
+          setPassword('');
+          setAuthError('Contraseña incorrecta o sesión expirada.');
+          return;
+        }
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          setStatusMessage({
+            type: 'error',
+            text: data.details || data.error || 'Error al conectar con el servidor.',
+          });
+          return;
+        }
+
+        if (data.available && data.rowNumber) {
+          setContact({
+            rowNumber: data.rowNumber,
+            sheetType: data.sheetType || activeSheet,
+            pass: data.pass,
+            nombre: data.nombre || data.data?.nombre || '',
+            direccion: data.direccion || data.data?.direccion || '',
+            piso: data.piso || data.data?.piso || '',
+            telefono: data.telefono || data.data?.telefono || '',
+            t: data.t ?? data.data?.t ?? '',
+          });
+        } else {
+          setContact(null);
+          setStatusMessage({
+            type: 'info',
+            text: data.message || 'No hay contactos disponibles en esta lista.',
+          });
+        }
+      } catch (err: unknown) {
+        const error = err as Error;
+        setContact(null);
+        setStatusMessage({
+          type: 'error',
+          text: `Error de red: ${error.message || 'No se pudo contactar al servidor.'}`,
+        });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [sheetType]
+  );
+
+  // Load password from localStorage on mount & auto-load first contact
+  useEffect(() => {
+    const savedPassword = localStorage.getItem('territorio_app_password');
+    if (savedPassword) {
+      setPassword(savedPassword);
+      passwordRef.current = savedPassword;
+      setIsAuthenticated(true);
+      // Auto-load first number immediately on authenticated load
+      fetchNextContact('Números', savedPassword);
+    }
+  }, [fetchNextContact]);
 
   // Cleanup on tab close / reload
   useEffect(() => {
@@ -131,21 +203,28 @@ export default function HomePage() {
     const cleanPwd = inputPassword.trim();
     localStorage.setItem('territorio_app_password', cleanPwd);
     setPassword(cleanPwd);
+    passwordRef.current = cleanPwd;
     setIsAuthenticated(true);
     setAuthError('');
+    setLogoutNotice('');
     setInputPassword('');
+
+    // Auto-load first number immediately upon login
+    fetchNextContact(sheetType, cleanPwd);
   };
 
-  // Logout handler
-  const handleLogout = async () => {
+  // Exit application / Logout handler
+  const handleExitApp = async () => {
     if (contact) {
       await releaseCurrentContact(contact);
     }
     localStorage.removeItem('territorio_app_password');
     setPassword('');
+    passwordRef.current = '';
     setIsAuthenticated(false);
     setContact(null);
     setStatusMessage(null);
+    setLogoutNotice('Sesión cerrada. El contacto fue liberado y volvió a quedar disponible.');
   };
 
   // Switch sheet type
@@ -156,73 +235,13 @@ export default function HomePage() {
       setLoading(true);
       await releaseCurrentContact(contact);
       setContact(null);
-      setLoading(false);
     }
 
     setSheetType(newSheet);
     setStatusMessage(null);
-  };
 
-  // Fetch next contact
-  const fetchNextContact = async (overrideSheet?: SheetType) => {
-    const targetSheet = overrideSheet || sheetType;
-    setLoading(true);
-    setStatusMessage(null);
-
-    try {
-      const res = await fetch(`/api/next?sheet=${encodeURIComponent(targetSheet)}`, {
-        method: 'GET',
-        headers: {
-          'x-app-password': password,
-        },
-      });
-
-      if (res.status === 401) {
-        localStorage.removeItem('territorio_app_password');
-        setIsAuthenticated(false);
-        setPassword('');
-        setAuthError('Contraseña incorrecta o sesión expirada.');
-        return;
-      }
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setStatusMessage({
-          type: 'error',
-          text: data.details || data.error || 'Error al conectar con el servidor.',
-        });
-        return;
-      }
-
-      if (data.available && data.rowNumber) {
-        setContact({
-          rowNumber: data.rowNumber,
-          sheetType: data.sheetType || targetSheet,
-          pass: data.pass,
-          nombre: data.nombre || data.data?.nombre || '',
-          direccion: data.direccion || data.data?.direccion || '',
-          piso: data.piso || data.data?.piso || '',
-          telefono: data.telefono || data.data?.telefono || '',
-          t: data.t ?? data.data?.t ?? '',
-          notas: data.notas || data.data?.notas || '',
-        });
-      } else {
-        setContact(null);
-        setStatusMessage({
-          type: 'info',
-          text: data.message || 'No hay contactos disponibles en esta lista.',
-        });
-      }
-    } catch (err: unknown) {
-      const error = err as Error;
-      setStatusMessage({
-        type: 'error',
-        text: `Error de red: ${error.message || 'No se pudo contactar al servidor.'}`,
-      });
-    } finally {
-      setLoading(false);
-    }
+    // Auto-fetch first number of the newly selected sheet
+    fetchNextContact(newSheet);
   };
 
   // Manual release without recording
@@ -374,6 +393,26 @@ export default function HomePage() {
             </p>
           </div>
 
+          {logoutNotice && (
+            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-center gap-2">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="w-4 h-4 text-emerald-600 shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M5 13l4 4L19 7"
+                />
+              </svg>
+              <span>{logoutNotice}</span>
+            </div>
+          )}
+
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label
@@ -416,7 +455,7 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-between">
       {/* Top Header */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-xs">
         <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
@@ -425,12 +464,27 @@ export default function HomePage() {
             </span>
           </div>
 
+          {/* Redesigned Exit Button */}
           <button
-            onClick={handleLogout}
-            className="text-xs font-medium text-slate-500 hover:text-slate-800 py-1.5 px-2.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-            title="Cerrar sesión"
+            onClick={handleExitApp}
+            className="text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 py-1.5 px-3 rounded-lg transition-all active:scale-95 cursor-pointer flex items-center gap-1.5"
+            title="Salir de la aplicación y liberar contacto"
           >
-            Cerrar sesión
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="w-3.5 h-3.5 text-rose-600 shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+              />
+            </svg>
+            <span>Salir de la aplicación</span>
           </button>
         </div>
 
@@ -478,8 +532,42 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* State A: No Contact Assigned */}
-        {!contact ? (
+        {/* Loading State when fetching next number */}
+        {loading && !contact ? (
+          <div className="my-auto py-12 text-center space-y-4">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-slate-100 text-slate-600">
+              <svg
+                className="animate-spin h-7 w-7 text-slate-700"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                ></circle>
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                ></path>
+              </svg>
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-lg font-bold text-slate-800">
+                Buscando siguiente contacto...
+              </h2>
+              <p className="text-xs text-slate-500">
+                Consultando lista: <span className="font-semibold">{sheetType}</span>
+              </p>
+            </div>
+          </div>
+        ) : !contact ? (
+          /* Fallback State: No Contact Assigned (Only shown if list is empty or after error) */
           <div className="my-auto py-8 text-center space-y-6">
             <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 shadow-sm space-y-5">
               <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-slate-100 text-slate-600">
@@ -501,7 +589,7 @@ export default function HomePage() {
 
               <div className="space-y-1.5">
                 <h2 className="text-xl font-bold text-slate-800">
-                  Listo para predicar
+                  Sin contacto asignado
                 </h2>
                 <p className="text-sm text-slate-500">
                   Lista actual:{' '}
@@ -563,7 +651,7 @@ export default function HomePage() {
             </div>
           </div>
         ) : (
-          /* State B: Contact Assigned */
+          /* Active State: Contact Assigned */
           <div className="space-y-4 my-auto py-2">
             <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-4">
               {/* Badges Bar */}
@@ -585,7 +673,7 @@ export default function HomePage() {
                 )}
               </div>
 
-              {/* Contact Information */}
+              {/* Contact Information (Notas removed as requested) */}
               <div className="space-y-2 pt-1">
                 <h2 className="text-2xl font-bold text-slate-800 leading-tight">
                   {contact.nombre || '(Sin Nombre)'}
@@ -617,15 +705,6 @@ export default function HomePage() {
                       {contact.piso ? ` • Piso: ${contact.piso}` : ''}
                     </span>
                   </div>
-
-                  {contact.notas && (
-                    <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 space-y-1">
-                      <span className="font-semibold text-slate-500 uppercase tracking-wider block text-[10px]">
-                        Notas:
-                      </span>
-                      <p className="whitespace-pre-line">{contact.notas}</p>
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -669,11 +748,15 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Bottom Outcome Buttons */}
-            <div className="space-y-2 pt-1">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider text-center">
-                Registrar resultado de llamada:
-              </p>
+            {/* Bottom Outcome Buttons with Highlighted Header */}
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center justify-center gap-2 py-2 px-3 bg-slate-200/80 border border-slate-300 rounded-xl shadow-2xs">
+                <span className="w-2 h-2 rounded-full bg-slate-600"></span>
+                <p className="text-xs sm:text-sm font-bold text-slate-700 uppercase tracking-wider text-center">
+                  Registrar resultado de llamada:
+                </p>
+              </div>
+
               <div className="grid grid-cols-3 gap-2">
                 {/* Atendió -> 'OK' */}
                 <button
