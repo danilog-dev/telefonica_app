@@ -83,22 +83,15 @@ export async function GET(req: NextRequest) {
           if (locked) {
             const row = rows[rowIndex];
 
-            const baseData: Record<string, unknown> = {
+            const contactPayload: Record<string, unknown> = {
               nombre: row[config.nameCol] ?? '',
               direccion: row[config.addressCol] ?? '',
               telefono: row[config.phoneCol] ?? '',
               t: row[config.tempCol] ?? '',
-              notas: row[config.notesCol] ?? '',
-              p1_check: isCheckboxChecked(row[config.passColumns[1].checkboxColIndex]),
-              p1_rta: row[config.passColumns[1].responseColIndex] ?? '',
-              p2_check: isCheckboxChecked(row[config.passColumns[2].checkboxColIndex]),
-              p2_rta: row[config.passColumns[2].responseColIndex] ?? '',
-              p3_check: isCheckboxChecked(row[config.passColumns[3].checkboxColIndex]),
-              p3_rta: row[config.passColumns[3].responseColIndex] ?? '',
             };
 
             if (sheetType === 'Edificios Restringidos' && config.floorCol !== undefined) {
-              baseData.piso = row[config.floorCol] ?? '';
+              contactPayload.piso = row[config.floorCol] ?? '';
             }
 
             return NextResponse.json({
@@ -106,8 +99,8 @@ export async function GET(req: NextRequest) {
               sheetType,
               rowNumber,
               pass,
-              data: baseData,
-              ...baseData,
+              data: contactPayload,
+              ...contactPayload,
             });
           }
         }
