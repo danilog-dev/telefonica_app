@@ -653,7 +653,17 @@ export default function HomePage() {
         ) : (
           /* Active State: Contact Assigned */
           <div className="space-y-4 my-auto py-4">
-            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6 sm:p-8 space-y-5 text-center">
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6 sm:p-8 space-y-4 text-center">
+              {/* Card Header */}
+              <div>
+                <h2 className="text-lg font-semibold text-slate-800">
+                  Número a llamar
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Toca el botón para iniciar la llamada
+                </p>
+              </div>
+
               {/* Main Call Button */}
               {contact.telefono ? (
                 <a
