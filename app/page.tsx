@@ -13,6 +13,7 @@ interface ContactData {
   piso?: string;
   telefono?: string;
   t?: string | number;
+  savedAt?: number;
 }
 
 interface MessageBanner {
@@ -22,6 +23,7 @@ interface MessageBanner {
 
 const ACTIVE_CONTACT_STORAGE_KEY = 'territorio_active_contact';
 const APP_PASSWORD_STORAGE_KEY = 'territorio_app_password';
+const ACTIVE_CONTACT_TTL_MS = 15 * 60 * 1000; // 15 minutos
 
 export default function HomePage() {
   // Authentication
@@ -55,6 +57,32 @@ export default function HomePage() {
   useEffect(() => {
     passwordRef.current = password;
   }, [password]);
+
+  // Check and get non-expired active contact from localStorage
+  const getValidSavedContact = useCallback((): ContactData | null => {
+    if (typeof window === 'undefined') return null;
+    const savedContactStr = localStorage.getItem(ACTIVE_CONTACT_STORAGE_KEY);
+    if (!savedContactStr) return null;
+
+    try {
+      const savedContact = JSON.parse(savedContactStr) as ContactData;
+      if (!savedContact || !savedContact.rowNumber || !savedContact.sheetType || !savedContact.savedAt) {
+        localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
+        return null;
+      }
+
+      const elapsedMs = Date.now() - savedContact.savedAt;
+      if (elapsedMs > ACTIVE_CONTACT_TTL_MS) {
+        localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
+        return null;
+      }
+
+      return savedContact;
+    } catch {
+      localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
+      return null;
+    }
+  }, []);
 
   // Release lock helper
   const releaseCurrentContact = useCallback(
@@ -133,6 +161,7 @@ export default function HomePage() {
             piso: data.piso || data.data?.piso || '',
             telefono: data.telefono || data.data?.telefono || '',
             t: data.t ?? data.data?.t ?? '',
+            savedAt: Date.now(),
           };
           setContact(newContact);
           try {
@@ -170,25 +199,18 @@ export default function HomePage() {
       passwordRef.current = savedPassword;
       setIsAuthenticated(true);
 
-      // Check if an active contact exists in localStorage to avoid re-fetching
-      const savedContactStr = localStorage.getItem(ACTIVE_CONTACT_STORAGE_KEY);
-      if (savedContactStr) {
-        try {
-          const savedContact = JSON.parse(savedContactStr) as ContactData;
-          if (savedContact && savedContact.rowNumber && savedContact.sheetType) {
-            setContact(savedContact);
-            setSheetType(savedContact.sheetType);
-            return;
-          }
-        } catch {
-          localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
-        }
+      // Check if a non-expired active contact exists in localStorage to avoid re-fetching
+      const validContact = getValidSavedContact();
+      if (validContact) {
+        setContact(validContact);
+        setSheetType(validContact.sheetType);
+        return;
       }
 
-      // Auto-load first number immediately on authenticated load if no saved contact
+      // Auto-load first number immediately on authenticated load if no valid saved contact
       fetchNextContact('Números', savedPassword);
     }
-  }, [fetchNextContact]);
+  }, [fetchNextContact, getValidSavedContact]);
 
   // Login handler
   const handleLogin = (e: React.FormEvent) => {
@@ -206,19 +228,12 @@ export default function HomePage() {
     setLogoutNotice('');
     setInputPassword('');
 
-    // Check if an active contact exists in localStorage to avoid re-fetching
-    const savedContactStr = localStorage.getItem(ACTIVE_CONTACT_STORAGE_KEY);
-    if (savedContactStr) {
-      try {
-        const savedContact = JSON.parse(savedContactStr) as ContactData;
-        if (savedContact && savedContact.rowNumber && savedContact.sheetType) {
-          setContact(savedContact);
-          setSheetType(savedContact.sheetType);
-          return;
-        }
-      } catch {
-        localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
-      }
+    // Check if a non-expired active contact exists in localStorage to avoid re-fetching
+    const validContact = getValidSavedContact();
+    if (validContact) {
+      setContact(validContact);
+      setSheetType(validContact.sheetType);
+      return;
     }
 
     // Auto-load first number immediately upon login
