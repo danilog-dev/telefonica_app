@@ -20,6 +20,9 @@ interface MessageBanner {
   text: string;
 }
 
+const ACTIVE_CONTACT_STORAGE_KEY = 'territorio_active_contact';
+const APP_PASSWORD_STORAGE_KEY = 'territorio_app_password';
+
 export default function HomePage() {
   // Authentication
   const [password, setPassword] = useState<string>('');
@@ -41,7 +44,7 @@ export default function HomePage() {
   const [adminLoading, setAdminLoading] = useState<boolean>(false);
   const [adminMessage, setAdminMessage] = useState<MessageBanner | null>(null);
 
-  // Keep a ref to active contact & password for release on unload
+  // Keep a ref to active contact & password
   const contactRef = useRef<ContactData | null>(null);
   const passwordRef = useRef<string>('');
 
@@ -102,7 +105,8 @@ export default function HomePage() {
         });
 
         if (res.status === 401) {
-          localStorage.removeItem('territorio_app_password');
+          localStorage.removeItem(APP_PASSWORD_STORAGE_KEY);
+          localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
           setIsAuthenticated(false);
           setPassword('');
           setAuthError('Contraseña incorrecta o sesión expirada.');
@@ -120,7 +124,7 @@ export default function HomePage() {
         }
 
         if (data.available && data.rowNumber) {
-          setContact({
+          const newContact: ContactData = {
             rowNumber: data.rowNumber,
             sheetType: data.sheetType || activeSheet,
             pass: data.pass,
@@ -129,9 +133,16 @@ export default function HomePage() {
             piso: data.piso || data.data?.piso || '',
             telefono: data.telefono || data.data?.telefono || '',
             t: data.t ?? data.data?.t ?? '',
-          });
+          };
+          setContact(newContact);
+          try {
+            localStorage.setItem(ACTIVE_CONTACT_STORAGE_KEY, JSON.stringify(newContact));
+          } catch (storageErr) {
+            console.error('Error saving active contact to localStorage:', storageErr);
+          }
         } else {
           setContact(null);
+          localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
           setStatusMessage({
             type: 'info',
             text: data.message || 'No hay contactos disponibles en esta lista.',
@@ -151,47 +162,33 @@ export default function HomePage() {
     [sheetType]
   );
 
-  // Load password from localStorage on mount & auto-load first contact
+  // Load password from localStorage on mount & restore active contact or auto-load first contact
   useEffect(() => {
-    const savedPassword = localStorage.getItem('territorio_app_password');
+    const savedPassword = localStorage.getItem(APP_PASSWORD_STORAGE_KEY);
     if (savedPassword) {
       setPassword(savedPassword);
       passwordRef.current = savedPassword;
       setIsAuthenticated(true);
-      // Auto-load first number immediately on authenticated load
+
+      // Check if an active contact exists in localStorage to avoid re-fetching
+      const savedContactStr = localStorage.getItem(ACTIVE_CONTACT_STORAGE_KEY);
+      if (savedContactStr) {
+        try {
+          const savedContact = JSON.parse(savedContactStr) as ContactData;
+          if (savedContact && savedContact.rowNumber && savedContact.sheetType) {
+            setContact(savedContact);
+            setSheetType(savedContact.sheetType);
+            return;
+          }
+        } catch {
+          localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
+        }
+      }
+
+      // Auto-load first number immediately on authenticated load if no saved contact
       fetchNextContact('Números', savedPassword);
     }
   }, [fetchNextContact]);
-
-  // Cleanup on tab close / reload
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (contactRef.current && passwordRef.current) {
-        const payload = JSON.stringify({
-          sheetType: contactRef.current.sheetType,
-          rowNumber: contactRef.current.rowNumber,
-        });
-        try {
-          fetch('/api/release', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-app-password': passwordRef.current,
-            },
-            body: payload,
-            keepalive: true,
-          });
-        } catch {
-          // ignore error on unload
-        }
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, []);
 
   // Login handler
   const handleLogin = (e: React.FormEvent) => {
@@ -201,13 +198,28 @@ export default function HomePage() {
       return;
     }
     const cleanPwd = inputPassword.trim();
-    localStorage.setItem('territorio_app_password', cleanPwd);
+    localStorage.setItem(APP_PASSWORD_STORAGE_KEY, cleanPwd);
     setPassword(cleanPwd);
     passwordRef.current = cleanPwd;
     setIsAuthenticated(true);
     setAuthError('');
     setLogoutNotice('');
     setInputPassword('');
+
+    // Check if an active contact exists in localStorage to avoid re-fetching
+    const savedContactStr = localStorage.getItem(ACTIVE_CONTACT_STORAGE_KEY);
+    if (savedContactStr) {
+      try {
+        const savedContact = JSON.parse(savedContactStr) as ContactData;
+        if (savedContact && savedContact.rowNumber && savedContact.sheetType) {
+          setContact(savedContact);
+          setSheetType(savedContact.sheetType);
+          return;
+        }
+      } catch {
+        localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
+      }
+    }
 
     // Auto-load first number immediately upon login
     fetchNextContact(sheetType, cleanPwd);
@@ -218,7 +230,8 @@ export default function HomePage() {
     if (contact) {
       await releaseCurrentContact(contact);
     }
-    localStorage.removeItem('territorio_app_password');
+    localStorage.removeItem(APP_PASSWORD_STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
     setPassword('');
     passwordRef.current = '';
     setIsAuthenticated(false);
@@ -233,6 +246,7 @@ export default function HomePage() {
 
     if (contact) {
       setLoading(true);
+      localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
       await releaseCurrentContact(contact);
       setContact(null);
     }
@@ -248,6 +262,7 @@ export default function HomePage() {
   const handleManualRelease = async () => {
     if (!contact) return;
     setLoading(true);
+    localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
     await releaseCurrentContact(contact);
     setContact(null);
     setStatusMessage({
@@ -280,7 +295,8 @@ export default function HomePage() {
       });
 
       if (res.status === 401) {
-        localStorage.removeItem('territorio_app_password');
+        localStorage.removeItem(APP_PASSWORD_STORAGE_KEY);
+        localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
         setIsAuthenticated(false);
         setPassword('');
         setAuthError('Contraseña incorrecta o sesión expirada.');
@@ -298,6 +314,7 @@ export default function HomePage() {
       }
 
       // Contact was recorded & released on server
+      localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
       setContact(null);
 
       // Auto-load next contact
